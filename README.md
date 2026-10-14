@@ -17,7 +17,7 @@ l'audio, d'identifier les différents locuteurs, puis de produire une analyse st
 - [Tests effectués](#tests-effectués)
 - [Tests automatisés](#tests-automatisés)
 - [Limites connues](#limites-connues)
-- [Bonus implémentés](#bonus-implémentés)
+- [Fonctionnalités complémentaires](#fonctionnalités-complémentaires)
 - [Pistes d'amélioration](#pistes-damélioration)
 
 ---
@@ -99,8 +99,7 @@ résultat de l'analyse.
 - **Avantages** : rapide sur CPU, supporte nativement la détection automatique de langue,
   filtrage VAD intégré (`vad_filter=True`) pour ignorer les silences, timestamps par segment.
 - **Limites** : les modèles `base`/`small` sont moins précis que `large-v3` sur de l'audio
-  bruité, du vocabulaire technique, ou des accents marqués. Le compromis vitesse/qualité est
-  assumé pour rester utilisable en environnement CPU sans GPU (contrainte du challenge).
+  bruité, du vocabulaire technique, ou des accents marqués. Ce compromis entre vitesse et précision permet d'exécuter le pipeline sur CPU, sans nécessiter de GPU dédié.
 - **Traitements appliqués** : voir la section preprocessing ci-dessous.
 
 ### Preprocessing audio
@@ -125,8 +124,7 @@ transmettre un fichier corrompu aux étapes suivantes.
 ### Speaker Diarization
 
 - **Approche** : `pyannote/speaker-diarization-3.1`, exécuté sur l'audio prétraité (mono,
-  16kHz). Le modèle ne reçoit aucune indication a priori sur le nombre de locuteurs — il les
-  détecte lui-même, conformément à l'exigence du challenge.
+  16kHz). Le modèle ne reçoit aucune indication a priori sur le nombre de locuteurs — il les détecte lui-même, sans connaissance préalable du nombre de personnes qui interviennent.
 - **Association transcription ↔ locuteurs** : chaque segment de transcription Whisper est
   comparé à l'ensemble des segments de diarisation ; on lui attribue le locuteur dont le
   segment **recouvre le plus dans le temps** (overlap maximal entre `[start, end]` des deux
@@ -568,7 +566,7 @@ contient la cause, consultable via `GET /videos/{video_id}/status`.
 | Plusieurs locuteurs | ✅ testé — `number_of_speakers: 2` | Interview de 5:38 (Sommet de la Francophonie) avec une journaliste et une invitée. La diarisation détecte correctement les 2 locuteurs distincts et les segments de transcription leur sont bien attribués individuellement (`SPEAKER_00`/`SPEAKER_01`), confirmant le bon fonctionnement de l'alignement transcription ↔ diarisation sur un cas réel à 2 voix. |
 | Bruit de fond | ✅ testé — 5/6 locuteurs détectés | Vidéo avec musique/bruit de fond en continu et 6 intervenants réels (`bruit-fond.mp4`) : la diarisation détecte 5 locuteurs distincts sur 170 segments. Résultat globalement satisfaisant malgré le bruit — un léger sous-comptage (5 au lieu de 6) plutôt qu'une sur-segmentation, cohérent avec le fait que `pyannote` regroupe parfois deux locuteurs aux caractéristiques vocales proches ou aux temps de parole très courts dans un même cluster. Le bruit dégrade aussi légèrement la transcription elle-même, ce qui se répercute sur l'analyse LLM en aval (le résumé généré contient une légère hallucination lexicale, probablement due à un passage mal transcrit). |
 | Qualité audio correcte | ✅ testé — `number_of_speakers: 1` | Vidéo `qualite-correcte.mp4` (podcast tutoriel sur la création de podcast, audio propre, un seul intervenant) : 29 segments, diarisation cohérente (`SPEAKER_00` unique), transcription fidèle et résumé/points clés cohérents avec le contenu. Confirme que la précision du pipeline (transcription + diarisation + analyse LLM) est bonne dans des conditions audio favorables, par contraste avec le cas du bruit de fond ci-dessus. |
-| Absence de parole (clip musical chanté) | ✅ testé — `status: failed` | Le système détecte correctement l'absence de parole exploitable via le VAD intégré à `faster-whisper` et retourne `error_message: "No speech detected in the audio."` au lieu de produire un résultat vide ou inventé, conformément à la contrainte de robustesse du cahier des charges. |
+| Absence de parole (clip musical chanté) | ✅ testé — `status: failed` | Le système détecte correctement l'absence de parole exploitable via le VAD intégré à `faster-whisper` et retourne `error_message: "No speech detected in the audio."` au lieu de produire un résultat vide ou inventé, ce qui garantit une gestion explicite des cas où aucune parole exploitable n'est détectée. |
 
 ## Tests automatisés
 
@@ -609,7 +607,7 @@ unitaires pour ne pas dépendre de leur téléchargement/exécution réelle en C
   lourds sur de l'audio difficile (bruit important, accents forts, chevauchement de paroles).
 - **La précision de la transcription varie selon la langue source.** Les tests réalisés en
   français et en espagnol donnent une transcription fidèle, mais le test en arabe
-  (`اسأل نفسك!`) montre une dégradation notable de la qualité — mots mal reconnus ou
+  (`اسأل نفسك`) montre une dégradation notable de la qualité — mots mal reconnus ou
   substitués (ex. structures répétées mal transcrites) alors que le contenu audio est propre
   et sans bruit de fond. Ce comportement est cohérent avec le fait que le modèle `base` de
   Whisper est entraîné sur un corpus majoritairement anglophone/européen, et donc
@@ -628,8 +626,7 @@ unitaires pour ne pas dépendre de leur téléchargement/exécution réelle en C
   (`qwen2.5:7b`) suit correctement ce type de consigne, mais au prix d'une latence
   significativement plus élevée en environnement CPU-only, ce qui a motivé le choix de revenir
   à une sortie français-only pour cette version, plutôt que de dégrader le temps de traitement
-  global. Ce résultat illustre concrètement le compromis taille de modèle / fiabilité imposé
-  par la contrainte "ressources limitées, sans GPU" du challenge.
+  global. Cette expérimentation met en évidence le compromis entre la taille du modèle, la fiabilité des résultats et les ressources matérielles disponibles.
 - Le traitement est actuellement synchrone au sein du `BackgroundTask` (un seul job à la fois
   par processus) — pas encore de file d'attente distribuée (Celery/RQ) pour la montée en
   charge. En revanche, au sein d'un même job, transcription et diarisation sont parallélisées
@@ -645,25 +642,17 @@ unitaires pour ne pas dépendre de leur téléchargement/exécution réelle en C
   longueur de génération LLM (`num_predict`), augmentation de `ANALYSIS_CHUNK_SIZE` pour
   réduire le nombre d'appels séquentiels au LLM, et timeout Ollama dimensionné en conséquence
   (`OLLAMA_TIMEOUT`). Sur un CPU de bureau moderne ou dans un environnement dédié (type VM
-  cloud, Google Colab), les temps de traitement seraient nettement réduits. C'est cette
-  contrainte matérielle qui a motivé le choix de tester le système sur des vidéos courtes
-  (23 secondes à ~6 minutes selon les cas, voir [Exemples de résultats](#exemples-de-résultats)),
-  conformément à la limite de 10-15 minutes suggérée par le cahier des charges — le pipeline
-  reste fonctionnel au-delà, mais avec un temps de traitement proportionnellement plus long.
+  cloud, Google Colab), les temps de traitement seraient nettement réduits. Cette contrainte matérielle a conduit à privilégier des vidéos courtes pour les tests (environ 23 secondes à 6 minutes selon les cas, voir la section [Exemples de résultats](#exemples-de-résultats)). Le pipeline peut également traiter des vidéos plus longues, avec un temps de traitement qui augmente selon leur durée et leur complexité.
 
-## Bonus implémentés
+## Fonctionnalités complémentaires
 
 - **Détection automatique de la langue** : `faster-whisper` détecte automatiquement la langue
   parlée (`info.language`, avec score de confiance `language_probability`) sans configuration
   préalable, permettant nativement la prise en charge de plusieurs langues.
-- **Transcription multilingue vérifiée** : testé avec succès sur six langues — français,
-  anglais, espagnol, allemand, arabe et chinois — chacune correctement transcrite et diarisée
-  sans aucune configuration manuelle, confirmant que la partie STT/diarisation du pipeline est
-  réellement langue-agnostique.
+- **Transcription multilingue évaluée** : le pipeline a été testé sur six langues — français, anglais, espagnol, allemand, arabe et chinois. Les résultats varient selon la langue et la qualité audio ; des améliorations restent notamment nécessaires pour la transcription en arabe.
 - **Export sous-titres (.srt)** : le transcript timestampé peut être exporté au format `.srt`
   standard (`GET /videos/{id}/subtitles.srt`), directement utilisable comme piste de
-  sous-titres dans n'importe quel lecteur vidéo (VLC, YouTube, etc.) — un usage produit
-  concret au-delà du simple JSON demandé par le cahier des charges.
+  sous-titres dans n'importe quel lecteur vidéo (VLC, YouTube, etc.) — une fonctionnalité complémentaire permettant d'exploiter les transcriptions dans les lecteurs vidéo compatibles.
 - **Interface utilisateur soignée** : dashboard avec statistiques globales et graphiques, page
   d'historique des analyses, et mode sombre.
 
