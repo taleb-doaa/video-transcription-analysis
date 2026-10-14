@@ -1,0 +1,28 @@
+# Dépendances (réinstallées dans l'image)
+frontend/node_modules
+backend/__pycache__
+**/__pycache__
+**/*.pyc
+
+# Build artifacts locaux (regénérés dans l'image)
+frontend/dist
+
+# Données runtime (ne doivent jamais entrer dans l'image)
+storage/
+backend/storage/
+
+# VCS / IDE / OS
+.git
+.gitignore
+.vscode
+.idea
+.DS_Store
+
+# Fichiers d'environnement (secrets, jamais dans l'image)
+.env
+.env.example
+
+# Divers non nécessaires au build
+*.log
+build.log
+docs/

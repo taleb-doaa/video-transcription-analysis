@@ -1,0 +1,98 @@
+services:
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smartly-ai-backend
+
+    environment:
+      APP_NAME: ${APP_NAME}
+      APP_ENV: ${APP_ENV}
+      APP_VERSION: ${APP_VERSION}
+
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+
+      OLLAMA_URL: ${OLLAMA_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL}
+      ANALYSIS_CHUNK_SIZE: ${ANALYSIS_CHUNK_SIZE}
+      OLLAMA_TIMEOUT: ${OLLAMA_TIMEOUT}
+
+      HF_TOKEN: ${HF_TOKEN}
+
+      STORAGE_PATH: ${STORAGE_PATH}
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB}
+
+    ports:
+      - "${BACKEND_PORT}:8000"
+
+    volumes:
+      - ./storage:/app/storage
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+
+    restart: unless-stopped
+
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartly-ai-postgres
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+    ports:
+      - "${POSTGRES_PORT}:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+    restart: unless-stopped
+
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: smartly-ai-ollama
+
+    environment:
+      OLLAMA_NUM_THREAD: 4
+      OLLAMA_NUM_PARALLEL: 1
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_KEEP_ALIVE: 30m
+
+    ports:
+      - "11434:11434"
+
+    volumes:
+      - ollama_data:/root/.ollama
+
+    restart: unless-stopped
+
+
+volumes:
+
+  postgres_data:
+    name: smartly-ai-postgres-data
+
+  ollama_data:
+    name: smartly-ai-ollama-data
